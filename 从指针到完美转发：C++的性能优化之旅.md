@@ -108,14 +108,122 @@ class Demo{
 
 ## std::move
 
+我们之所以说，让右值进行移动语义优化，是因为右值是临时的值，进行移动不会有问题，这是对编译器来说的，但是有一些值，对于程序员来说，它虽然不是临时值，但是也可以进行移动优化，因为以后可能用不上了。
 
+比如说，我们需要把v1赋值给v2，但是v1我们不用了，我们就可以把v1用std::move修饰一下，它原来是不能被移动的左值，现在std::move输出的是右值，它就可以被匹配到移动赋值函数里：
+
+```C++
+vector<int> v1 = {1, 2,3};
+// some statements
+
+vector<int> v2;
+
+v2 = std::move(v1);
+```
+此时你输出v1的值，就会出现段错误：
+```C++
+vector<int> v1 = {1, 2,3};
+// some statements
+
+vector<int> v2;
+
+v2 = std::move(v1);
+
+// Segmentation fault  (core dumped)
+std::cout << v1[0];
+```
+
+所以std::move相当于C++相信，程序员比编译器更懂代码，更应该知道哪里需要进行优化，以进一步提升性能。
 
 ## 完美转发
 
-### 函数参数转发能力减弱
+我们因为要进行移动语义，所以引入了右值引用，使得右值可以和左值匹配到不同的函数，但是右值引用的加入使得C++原有的体系的其它部分出现了一些问题，主要问题有：
 
-### 模板引用导致多级引用
+1. 可能会产生多级引用
+2. 函数参数转发能力减弱
+3. 右值引用也是一个左值
+
+
+
+### 函数转发能力减弱
+
+因为左右值有自己的引用，所以我们必须写两个函数来匹配值，对于这个问题，我们可以用const引用来缓解，因为const引用可以同时匹配左右值引用：
+
+```C++
+void func(const int& v){
+
+}
+
+int main(){
+    func(1);
+    int x = 1;
+    func(x);
+}
+```
+但是因为有const的存在，func函数转发后就不能修改v了。
 
 ### 右值引用是一个左值
+这会导致作为右值的实参在传入匹配到的函数后，变成了左值，出现了失真，我们就不能对右值进行移动了，所以我们希望在函数参数传递的过程中，保留值的左右值的特性。
+### 模板引用导致多级引用
 
-## 移动语义的实现
+用模板来做函数的形参有一个好处，那就是可以真正实现万能引用，T&&既可以接左值引用也可以接右值引用，用这种方法可以解决上面提到的问题：
+
+```C++
+void func(T&& v){
+
+}
+
+int main(){
+    func(1);
+    int x = 1;
+    func(x);
+}
+```
+
+但是使用模板类型做参数的时候，可能会产生多级引用，比如说T&&，其中T是一个右值引用int&&，那么T&&经过推导后就变成了int&&&&。我们可以设计一种折叠机制，把多的，没有意义的&折叠成一个或者两个&，一个&就是左值引用，两个&的就是右值引用。
+
+那么究竟应该怎么折叠呢？int&&&&应该折叠成int&还是int&&呢？这和我们提到的第二点问题有关系，我们希望，如果v是一个右值，那么它应该被折叠成右值引用，比如说T是int&&,展开后就变成int&&&&，我们就希望它最后折叠成int&&,如果T是int&,展开后变成int&&&,最后我们希望它折叠成int&，所以折叠规则就是：
+
+| 折叠前  | 折叠后 |
+| ----   | ----  |
+| T&&&&   | T&&   |
+| T&&&   | T&     |
+
+有了这套规则我们就可以把一个右值引用从左值还原回右值了
+
+## std::move和std::forward的实现
+
+在上面的介绍中，我们发现std::move可以把任意一个值转换为一个右值，std::forward可以把输入的值还原回它本来的值类型，那么它们是怎么实现的呢？那就需要用到我们之前说的引用折叠了。
+
+首先，我们要把一个值转换成一个右值，我们就直接把它的值类型去掉，因为不管是右值还是左值，都需要转换为右值：
+
+```C++
+template <class T>
+typename remove_reference<T>::type&& move(T&& t) noexcept {
+        using return_type = typename remove_reference<T>::type;
+        return static_cast<return_type>(t);
+}
+```
+然后，变成右值引用，也就是&&：
+```C++
+template <class T>
+typename remove_reference<T>::type&& move(T&& t) noexcept {
+        using return_type = typename remove_reference<T>::type;
+        return static_cast<return_type>(t);
+}
+```
+
+对于完美转发，我们只需要在T前面加上&&，发生引用折叠后就会变成原来的引用类型：
+```C++
+template <class T>
+T&& forward(typename tinySTL::remove_reference<T>::type&& t) noexcept {
+    return static_cast<T&&>(t);
+}
+```
+但是这个只会匹配右值，左值也得来一个，不然找不到函数
+```C++
+template <class T>
+T&& forward(typename tinySTL::remove_reference<T>::type& t) noexcept {
+    return static_cast<T&&>(t);
+}
+```
