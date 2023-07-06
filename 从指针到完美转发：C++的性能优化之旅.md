@@ -137,6 +137,23 @@ std::cout << v1[0];
 
 所以std::move相当于C++相信，程序员比编译器更懂代码，更应该知道哪里需要进行优化，以进一步提升性能。
 
+从实现上来说，首先，我们要把一个值转换成一个右值，我们就直接把它的值类型去掉，因为不管是右值还是左值，都需要转换为右值：
+
+```C++
+template <class T>
+typename remove_reference<T>::type&& move(T&& t) noexcept {
+        using return_type = typename remove_reference<T>::type;
+        return static_cast<return_type>(t);
+}
+```
+然后，变成右值引用，也就是&&：
+```C++
+template <class T>
+typename remove_reference<T>::type&& move(T&& t) noexcept {
+        using return_type = typename remove_reference<T>::type;
+        return static_cast<return_type>(t);
+}
+```
 ## 完美转发
 
 我们因为要进行移动语义，所以引入了右值引用，使得右值可以和左值匹配到不同的函数，但是右值引用的加入使得C++原有的体系的其它部分出现了一些问题，主要问题有：
@@ -192,29 +209,10 @@ int main(){
 
 有了这套规则我们就可以把一个右值引用从左值还原回右值了
 
-## std::move和std::forward的实现
+## std::forward的实现
 
-在上面的介绍中，我们发现std::move可以把任意一个值转换为一个右值，std::forward可以把输入的值还原回它本来的值类型，那么它们是怎么实现的呢？那就需要用到我们之前说的引用折叠了。
+在上面的介绍中，我们发现std::move可以把任意一个值转换为一个右值，std::forward可以把输入的值还原回它本来的值类型，那么它是怎么实现的呢？那就需要用到我们之前说的引用折叠了。我们只需要在T前面加上&&，发生引用折叠后就会变成原来的引用类型：
 
-首先，我们要把一个值转换成一个右值，我们就直接把它的值类型去掉，因为不管是右值还是左值，都需要转换为右值：
-
-```C++
-template <class T>
-typename remove_reference<T>::type&& move(T&& t) noexcept {
-        using return_type = typename remove_reference<T>::type;
-        return static_cast<return_type>(t);
-}
-```
-然后，变成右值引用，也就是&&：
-```C++
-template <class T>
-typename remove_reference<T>::type&& move(T&& t) noexcept {
-        using return_type = typename remove_reference<T>::type;
-        return static_cast<return_type>(t);
-}
-```
-
-对于完美转发，我们只需要在T前面加上&&，发生引用折叠后就会变成原来的引用类型：
 ```C++
 template <class T>
 T&& forward(typename tinySTL::remove_reference<T>::type&& t) noexcept {
